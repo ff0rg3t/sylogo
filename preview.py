@@ -115,6 +115,13 @@ def main() -> None:
         render(colored, None, *empty).save(DOCS / f"{shape}_stand.png")
         render(plain, None, *empty).save(DOCS / f"{shape}_stand_single_color.png")
         render(colored, None, *closeup, fov=24).save(DOCS / f"{shape}_stand_logo.png")
+
+        # Separately printed logo: the pieces as they come off the bed, laid out in front of the recessed body.
+        body = (S.to_trimesh(stand.inlay_body), hex_rgb(params.body_color))
+        front = -stand.size[1] / 2 - 26
+        loose = [(S.to_trimesh(flat.translate((0, front, 0))), hex_rgb(color)) for _, color, flat in stand.inlay_pieces]
+        render([body] + loose, None, -20, 44, 290, (0, -24, 6)).save(DOCS / f"{shape}_stand_inlay.png")
+        render([body], None, *closeup, fov=24).save(DOCS / f"{shape}_stand_inlay_recesses.png")
     print(f"wrote previews to {DOCS}")
 
 

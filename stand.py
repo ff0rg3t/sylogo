@@ -11,14 +11,18 @@ import argparse
 import math
 import zipfile
 from dataclasses import dataclass, fields
+from functools import reduce
+from operator import add
 from pathlib import Path
 
 import numpy as np
 import svgelements as se
 import trimesh
-from manifold3d import CrossSection, FillRule, Manifold
+from manifold3d import CrossSection, FillRule, JoinType, Manifold
 
 ROOT = Path(__file__).resolve().parent
+# Offsetting outlines leaves features far smaller than STL's precision; anything below this (mm) is removed.
+TOLERANCE = 0.004
 
 
 @dataclass
@@ -38,7 +42,9 @@ class Params:
     draft: float = 3.0  # how far the sides and back lean inward
     corner_radius: float = 4.0  # rounding of the vertical corners
     emboss: float = 0.6  # how far the logo stands proud of the face
-    inlay: float = 0.8  # how deep the coloured logo parts sink into the body
+    inlay: float = 1.4  # how deep the logo sits in the body
+    inlay_clearance: float = 0.15  # gap around each separately printed logo piece in its recess
+    min_wall: float = 0.5  # thinnest printable wall; closer logo pieces share a recess
     body_color: str = "#ECECEC"  # display colour only, used in the 3MF
 
 
@@ -53,6 +59,9 @@ PRESETS = {
 class Stand:
     solid: Manifold  # body and logo fused, for single-colour printing
     parts: list[tuple[str, str, Manifold]]  # (name, hex colour, mesh), non-overlapping
+    inlay_body: Manifold  # body with recesses for the separately printed logo pieces
+    inlay_pieces: list[tuple[str, str, Manifold]]  # (name, hex colour, that colour's pieces lying flat on z = 0)
+    seat: np.ndarray  # 3x4 transform moving the flat logo pieces into their recesses
     puzzle: Manifold  # the cube or sphere resting in its pocket, for previews and fit checks
     puzzle_frame: np.ndarray  # 3x4 transform from the puzzle's own centred axes to the stand
     size: tuple[float, float, float]
@@ -92,6 +101,31 @@ def load_logo(svg_path: Path, width: float) -> tuple[dict[str, CrossSection], fl
         outline = CrossSection([(c - centre) * (scale, -scale) for c in contours], rule)
         by_color[color] = by_color[color] + outline if color in by_color else outline
     return by_color, (high[1] - low[1]) * scale
+
+
+def grow(outline: CrossSection, distance: float) -> CrossSection:
+    return outline.offset(distance, JoinType.Round, 2.0, 32).simplify(TOLERANCE)
+
+
+def split_logo(logo: dict[str, CrossSection], p: Params) -> list[tuple[str, CrossSection, CrossSection]]:
+    """Split the logo into separately printable pieces: (colour, footprint, part of it left flush with the face)."""
+    bridge = p.min_wall / 2 + p.inlay_clearance
+    pieces = []
+    for color, outline in logo.items():
+        others = reduce(add, (o for c, o in logo.items() if c != color), CrossSection())
+        islands = outline.decompose()
+        for group in grow(grow(outline, bridge), -bridge).decompose():
+            members = [island for island in islands if (island ^ group).area() > island.area() / 2]
+            footprint, flush = reduce(add, members), CrossSection()
+            if len(members) > 1:
+                # Shapes of one colour with no room for a wall between them become one piece on a shared base,
+                # rounded off so that its recess has no teeth too fine to print.
+                raised = footprint
+                footprint = grow(grow(raised, 3 * bridge), -3 * bridge) - grow(others, 2 * p.inlay_clearance)
+                # The base shows between the shapes; slivers along their edges are dropped.
+                flush = grow(grow(footprint - raised, -0.01), 0.02)
+            pieces.append((color, footprint, flush))
+    return pieces
 
 
 def rounded_rect(x0: float, x1: float, y0: float, y1: float, r: float, z: float) -> list[tuple]:
@@ -162,21 +196,42 @@ def build(p: Params, svg_path: Path) -> Stand:
         ]
     )
     centre_xy = (0, -depth / 2, 0)
-    body = body.translate(centre_xy)
+    blank = body.translate(centre_xy)
     puzzle_frame = np.column_stack(axes + [centre + centre_xy])
+    # A logo outline extruded up from z = 0 lands in the face, sunk `inlay` deep.
+    seat = face.copy()
+    seat[:, 3] += centre_xy - p.inlay * face[:, 2]
+    thickness = p.inlay + p.emboss
 
-    solid, parts, used = body, [], CrossSection()
+    used = CrossSection()
+    for color in logo:
+        logo[color] -= used  # keep the colours from overlapping each other
+        used += logo[color]
+
+    solid, body, parts = blank, blank, []
     for color, outline in logo.items():
-        outline -= used  # keep the colour parts from overlapping each other
-        used += outline
-        raised = outline.extrude(p.inlay + p.emboss).translate((0, 0, -p.inlay))
-        raised = raised.transform(face).translate(centre_xy)
+        raised = outline.extrude(thickness).transform(seat)
         solid += raised
         body -= raised
         parts.append((f"logo_{color.lstrip('#')}", color, raised))
     parts.insert(0, ("body", p.body_color, body))
 
-    return Stand(solid, parts, puzzle.transform(puzzle_frame), puzzle_frame, (2 * bottom_half, depth, height))
+    # Separately printed logo: every piece gets a recess with clearance all round.
+    pieces = split_logo(logo, p)
+    recess = reduce(add, (grow(footprint, p.inlay_clearance) for _, footprint, _ in pieces))
+    recess = grow(grow(recess, p.min_wall / 2), -p.min_wall / 2)  # walls too thin to print are left out
+    inlay_body = (blank - recess.extrude(2 * thickness).transform(seat)).simplify(TOLERANCE)
+    inlay_pieces = []
+    for color in logo:
+        flat = Manifold()
+        for _, footprint, flush in (piece for piece in pieces if piece[0] == color):
+            flat += footprint.extrude(thickness)
+            if not flush.is_empty():  # cut down to face level where the shared base shows
+                flat -= flush.extrude(thickness).translate((0, 0, p.inlay))
+        inlay_pieces.append((f"logo_{color.lstrip('#')}", color, flat.simplify(TOLERANCE)))
+
+    size = (2 * bottom_half, depth, height)
+    return Stand(solid, parts, inlay_body, inlay_pieces, seat, puzzle.transform(puzzle_frame), puzzle_frame, size)
 
 
 def to_trimesh(solid: Manifold) -> trimesh.Trimesh:
@@ -254,13 +309,15 @@ def main() -> None:
 
     name = f"{params.shape}_stand"
     to_trimesh(stand.solid).export(out / f"{name}.stl")
-    for part, _, solid in stand.parts:
-        to_trimesh(solid).export(out / f"{name}_{part}.stl")
     write_3mf(out / f"{name}_multicolor.3mf", name, stand.parts)
+    to_trimesh(stand.inlay_body).export(out / f"{name}_inlay_body.stl")
+    for part, _, flat in stand.inlay_pieces:
+        to_trimesh(flat).export(out / f"{name}_inlay_{part}.stl")
+        print(f"{part}: {len(flat.decompose())} separate pieces")
 
     print("size (mm): %.1f x %.1f x %.1f" % stand.size)
     print("volume (cm3): %.1f" % (stand.solid.volume() / 1000))
-    print(f"wrote {len(stand.parts) + 2} files to {out}")
+    print(f"wrote {len(stand.inlay_pieces) + 3} files to {out}")
 
 
 if __name__ == "__main__":

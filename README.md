@@ -21,14 +21,35 @@ The cube pocket is a plain cube corner, so smaller and larger cubes sit in it to
 
 ## Files to print
 
-Everything is in [`output/`](output), in millimetres, already oriented for printing (flat base
-down). Each stand has the same set of files, named `cube_stand…` or `sphere_stand…`:
+Everything is in [`output/`](output), in millimetres, already oriented for printing. Each stand
+can be printed three ways; the files are named `cube_stand…` or `sphere_stand…`:
 
-| File | Use |
+| Way to print | Files |
 | --- | --- |
-| `…_stand.stl` | Single-colour print: one solid with the logo raised 0.6 mm. |
-| `…_stand_multicolor.3mf` | Multi-colour print: body, dark logo and red logo as three parts of one object. |
-| `…_stand_body.stl`, `…_stand_logo_10181e.stl`, `…_stand_logo_e10600.stl` | The same three parts as separate STLs. Import them together and accept "load as a single object with multiple parts". |
+| Separate logo pieces pressed into the stand | `…_stand_inlay_body.stl`, `…_stand_inlay_logo_10181e.stl` (dark), `…_stand_inlay_logo_e10600.stl` (red) |
+| One multi-colour print | `…_stand_multicolor.3mf`: body, dark logo and red logo as three parts of one object |
+| One single-colour print | `…_stand.stl`: one solid with the logo raised 0.6 mm |
+
+### Separate logo pieces
+
+| Cube stand | Sphere stand |
+| --- | --- |
+| ![Cube stand with loose logo pieces](docs/cube_stand_inlay.png) | ![Sphere stand with loose logo pieces](docs/sphere_stand_inlay.png) |
+| ![Recesses in the cube stand](docs/cube_stand_inlay_recesses.png) | ![Recesses in the sphere stand](docs/sphere_stand_inlay_recesses.png) |
+
+The body has a 1.4 mm deep recess for every logo piece, 0.15 mm larger all round. The pieces are
+2 mm thick, so they stand 0.6 mm proud of the face once seated. Each logo file holds all the
+pieces of one colour, lying flat in the layout of the logo: 7 dark pieces (the emblem ring and
+the letters) and 4 red ones (the stripes, the two accents on the Y and the lower half of the O).
+
+- Print each logo file in its own colour, as exported, with the flat back on the bed.
+- Press the pieces in with a drop of glue. If they are tight or loose on your printer,
+  regenerate with a different `--inlay-clearance`.
+- The 13 red stripes are one piece: they sit on a thin red base that fills the recess between
+  them, because the gaps between the stripes are too narrow for walls.
+- The red accents on the Y are about 2.5 × 1 mm. Use tweezers.
+- Where two colours meet (the Y, the O and the emblem) the pieces share a recess, since the wall
+  between them would be under 0.5 mm.
 
 ## Printing
 
@@ -55,6 +76,7 @@ python stand.py                      # rewrites the cube stand in output/
 python stand.py --shape sphere       # rewrites the sphere stand in output/
 python stand.py --shape sphere --sphere-diameter 45 --pocket-depth 9
 python stand.py --cube-size 56 --logo-width 72 --emboss 0.8
+python stand.py --shape sphere --inlay-clearance 0.2   # looser fit for the logo pieces
 python stand.py --shape sphere --help  # all parameters and their defaults for that shape
 python preview.py                    # re-renders the images in docs/
 ```
