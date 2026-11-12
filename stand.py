@@ -23,6 +23,29 @@ from manifold3d import CrossSection, FillRule, JoinType, Manifold
 ROOT = Path(__file__).resolve().parent
 # Offsetting outlines leaves features far smaller than STL's precision; anything below this (mm) is removed.
 TOLERANCE = 0.004
+BASIC_COLORS = {
+    "black": (0, 0, 0),
+    "white": (255, 255, 255),
+    "grey": (128, 128, 128),
+    "red": (255, 0, 0),
+    "orange": (255, 128, 0),
+    "yellow": (255, 255, 0),
+    "green": (0, 160, 0),
+    "blue": (0, 0, 255),
+    "purple": (128, 0, 160),
+    "pink": (255, 105, 180),
+    "brown": (120, 70, 20),
+}
+
+
+def color_labels(colors: list[str]) -> list[str]:
+    """Give each hex colour a distinct name: the nearest basic colour, plus the hex or position if names clash."""
+    names = []
+    for color in colors:
+        rgb = [int(color.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4)]
+        names.append(min(BASIC_COLORS, key=lambda n: sum((a - b) ** 2 for a, b in zip(BASIC_COLORS[n], rgb))))
+    labels = [n if names.count(n) == 1 else f"{n}_{c.lstrip('#').lower()}" for n, c in zip(names, colors)]
+    return [label if labels.count(label) == 1 else f"{label}_{i + 1}" for i, label in enumerate(labels)]
 
 
 @dataclass
@@ -308,16 +331,18 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     name = f"{params.shape}_stand"
-    to_trimesh(stand.solid).export(out / f"{name}.stl")
+    to_trimesh(stand.solid).export(out / f"{name}_single_color.stl")
     write_3mf(out / f"{name}_multicolor.3mf", name, stand.parts)
-    to_trimesh(stand.inlay_body).export(out / f"{name}_inlay_body.stl")
-    for part, _, flat in stand.inlay_pieces:
-        to_trimesh(flat).export(out / f"{name}_inlay_{part}.stl")
-        print(f"{part}: {len(flat.decompose())} separate pieces")
+    # One file per filament colour: the stand with its recesses, then each colour's logo pieces.
+    by_color = [(params.body_color, stand.inlay_body)] + [(color, flat) for _, color, flat in stand.inlay_pieces]
+    labels = color_labels([color for color, _ in by_color])
+    for label, (_, mesh) in zip(labels, by_color):
+        to_trimesh(mesh).export(out / f"{name}_{label}.stl")
+        print(f"{name}_{label}.stl: {len(mesh.decompose())} piece(s)")
 
     print("size (mm): %.1f x %.1f x %.1f" % stand.size)
     print("volume (cm3): %.1f" % (stand.solid.volume() / 1000))
-    print(f"wrote {len(stand.inlay_pieces) + 3} files to {out}")
+    print(f"wrote {len(by_color) + 2} files to {out}")
 
 
 if __name__ == "__main__":

@@ -26,9 +26,9 @@ can be printed three ways; the files are named `cube_stand…` or `sphere_stand�
 
 | Way to print | Files |
 | --- | --- |
-| Separate logo pieces pressed into the stand | `…_stand_inlay_body.stl`, `…_stand_inlay_logo_10181e.stl` (dark), `…_stand_inlay_logo_e10600.stl` (red) |
-| One multi-colour print | `…_stand_multicolor.3mf`: body, dark logo and red logo as three parts of one object |
-| One single-colour print | `…_stand.stl`: one solid with the logo raised 0.6 mm |
+| Separate logo pieces pressed into the stand, one file per filament colour | `…_stand_white.stl` (the stand), `…_stand_black.stl` and `…_stand_red.stl` (the logo pieces) |
+| One multi-colour print | `…_stand_multicolor.3mf`: body, black logo and red logo as three parts of one object |
+| One single-colour print | `…_stand_single_color.stl`: one solid with the logo raised 0.6 mm |
 
 ### Separate logo pieces
 
@@ -37,12 +37,14 @@ can be printed three ways; the files are named `cube_stand…` or `sphere_stand�
 | ![Cube stand with loose logo pieces](docs/cube_stand_inlay.png) | ![Sphere stand with loose logo pieces](docs/sphere_stand_inlay.png) |
 | ![Recesses in the cube stand](docs/cube_stand_inlay_recesses.png) | ![Recesses in the sphere stand](docs/sphere_stand_inlay_recesses.png) |
 
-The body has a 1.4 mm deep recess for every logo piece, 0.15 mm larger all round. The pieces are
-2 mm thick, so they stand 0.6 mm proud of the face once seated. Each logo file holds all the
-pieces of one colour, lying flat in the layout of the logo: 7 dark pieces (the emblem ring and
-the letters) and 4 red ones (the stripes, the two accents on the Y and the lower half of the O).
+The white file is the stand, with a 1.4 mm deep recess for every logo piece, 0.15 mm larger all
+round. The pieces are 2 mm thick, so they stand 0.6 mm proud of the face once seated. The black
+and red files each hold all the pieces of that colour, lying flat in the layout of the logo:
+7 black pieces (the emblem ring and the letters) and 4 red ones (the stripes, the two accents on
+the Y and the lower half of the O).
 
-- Print each logo file in its own colour, as exported, with the flat back on the bed.
+- Print each file in its own colour, as exported: the stand on its base, the logo pieces with
+  the flat back on the bed.
 - Press the pieces in with a drop of glue. If they are tight or loose on your printer,
   regenerate with a different `--inlay-clearance`.
 - The 13 red stripes are one piece: they sit on a thin red base that fills the recess between
@@ -81,4 +83,6 @@ python stand.py --shape sphere --help  # all parameters and their defaults for t
 python preview.py                    # re-renders the images in docs/
 ```
 
-Any SVG made of filled shapes works with `--logo`; each fill colour becomes its own part.
+Any SVG made of filled shapes works with `--logo`; each fill colour becomes its own part. The
+per-colour files are named after the nearest basic colour, and the stand's file follows
+`--body-color`.
