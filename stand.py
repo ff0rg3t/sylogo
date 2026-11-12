@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Parametric Rubik's cube display stand with an SVG logo on its front face.
+"""Parametric Rubik's puzzle display stand with an SVG logo on its front face.
 
-The cube rests on one corner in a three-sided pocket; the logo is raised on a
-slanted plaque in front of it. Run `python stand.py --help` for the parameters.
+The puzzle is either a cube balanced on one corner in a three-sided pocket or a
+sphere resting in a dish; the logo is raised on a slanted plaque in front of it.
+Run `python stand.py --help` for the parameters.
 """
 from __future__ import annotations
 
@@ -24,8 +25,11 @@ ROOT = Path(__file__).resolve().parent
 class Params:
     """All lengths in millimetres, angles in degrees."""
 
+    shape: str = "cube"  # "cube" (balanced on a corner) or "sphere" (resting in a dish)
     cube_size: float = 57.0  # edge of the cube (standard 3x3 is 56-57 mm)
-    pocket_depth: float = 17.0  # vertical depth of the corner pocket
+    sphere_diameter: float = 40.0  # diameter of the sphere
+    sphere_clearance: float = 0.3  # extra dish radius so the sphere seats freely
+    pocket_depth: float = 17.0  # vertical depth of the pocket
     pocket_margin: float = 4.0  # flat rim left around the pocket
     logo_width: float = 66.0  # logo height follows from its aspect ratio
     logo_margin: float = 4.0  # clear border around the logo
@@ -38,11 +42,19 @@ class Params:
     body_color: str = "#ECECEC"  # display colour only, used in the 3MF
 
 
+# Default dimensions for each puzzle shape.
+PRESETS = {
+    "cube": Params(),
+    "sphere": Params(shape="sphere", pocket_depth=8.0, logo_width=60.0),
+}
+
+
 @dataclass
 class Stand:
     solid: Manifold  # body and logo fused, for single-colour printing
     parts: list[tuple[str, str, Manifold]]  # (name, hex colour, mesh), non-overlapping
-    cube_frame: np.ndarray  # 3x4 transform placing a unit-axis cube corner in the pocket
+    puzzle: Manifold  # the cube or sphere resting in its pocket, for previews and fit checks
+    puzzle_frame: np.ndarray  # 3x4 transform from the puzzle's own centred axes to the stand
     size: tuple[float, float, float]
 
 
@@ -98,16 +110,25 @@ def build(p: Params, svg_path: Path) -> Stand:
     run, rise = slope * math.cos(angle), slope * math.sin(angle)
     height = p.lip + rise
 
-    if not 0 < p.pocket_depth <= p.cube_size / math.sqrt(3):
-        raise ValueError("pocket_depth must be positive and at most cube_size / sqrt(3)")
+    # Footprint of the pocket on the top face: half width, and reach to the front and back of its lowest point.
+    if p.shape == "cube":
+        if not 0 < p.pocket_depth <= p.cube_size / math.sqrt(3):
+            raise ValueError("pocket_depth must be positive and at most cube_size / sqrt(3)")
+        # Seen from above, a cube corner cut at `pocket_depth` is an equilateral triangle.
+        rim_radius = p.pocket_depth * math.sqrt(2)
+        pocket_half, pocket_front, pocket_back = rim_radius * math.sqrt(3) / 2, rim_radius / 2, rim_radius
+    elif p.shape == "sphere":
+        if not 0 < p.pocket_depth <= p.sphere_diameter / 2:
+            raise ValueError("pocket_depth must be positive and at most half of sphere_diameter")
+        dish_radius = p.sphere_diameter / 2 + p.sphere_clearance
+        pocket_half = pocket_front = pocket_back = math.sqrt(p.pocket_depth * (2 * dish_radius - p.pocket_depth))
+    else:
+        raise ValueError(f"unknown shape {p.shape!r}; use one of {sorted(PRESETS)}")
     if height - p.pocket_depth < 2:
         raise ValueError("pocket would cut through the floor; reduce pocket_depth or enlarge the logo")
 
-    # Seen from above, a cube corner cut at `pocket_depth` is an equilateral triangle.
-    rim_radius = p.pocket_depth * math.sqrt(2)
-    top_half = p.logo_width / 2 + p.logo_margin + p.corner_radius
-    top_half = max(top_half, rim_radius * math.sqrt(3) / 2 + p.pocket_margin)
-    top_depth = 1.5 * rim_radius + 2 * p.pocket_margin
+    top_half = max(p.logo_width / 2 + p.logo_margin + p.corner_radius, pocket_half + p.pocket_margin)
+    top_depth = pocket_front + pocket_back + 2 * p.pocket_margin
     depth = run + top_depth + p.draft
     bottom_half = top_half + p.draft
 
@@ -118,12 +139,18 @@ def build(p: Params, svg_path: Path) -> Stand:
         np.array(rounded_rect(*bottom, 0) + rounded_rect(*bottom, p.lip) + rounded_rect(*top, height))
     )
 
-    # The pocket is the corner of a cube standing on its body diagonal, one flat side to the front.
+    # The puzzle's axes stand on a body diagonal, so a cube rests on one corner with a flat side to the front.
     k = math.sqrt(2 / 3)
-    edges = [(k * math.cos(math.radians(a)), k * math.sin(math.radians(a)), 1 / math.sqrt(3)) for a in (90, 210, 330)]
-    apex = (0, run + p.pocket_margin + rim_radius / 2, height - p.pocket_depth)
-    cube_frame = np.column_stack(edges + [apex])
-    body -= Manifold.cube([2 * p.cube_size] * 3).transform(cube_frame)
+    axes = [(k * math.cos(math.radians(a)), k * math.sin(math.radians(a)), 1 / math.sqrt(3)) for a in (90, 210, 330)]
+    lowest = np.array((0, run + p.pocket_margin + pocket_front, height - p.pocket_depth))
+    if p.shape == "cube":
+        centre = lowest + (0, 0, p.cube_size * math.sqrt(3) / 2)
+        puzzle = Manifold.cube([p.cube_size] * 3, True)
+        body -= Manifold.cube([2 * p.cube_size] * 3).transform(np.column_stack(axes + [lowest]))
+    else:
+        centre = lowest + (0, 0, p.sphere_diameter / 2)
+        puzzle = Manifold.sphere(p.sphere_diameter / 2, 128)
+        body -= Manifold.sphere(dish_radius, 256).translate(lowest + (0, 0, dish_radius))
 
     # Logo frame: x across the face, y up the slope, z out of the face.
     face = np.column_stack(
@@ -136,7 +163,7 @@ def build(p: Params, svg_path: Path) -> Stand:
     )
     centre_xy = (0, -depth / 2, 0)
     body = body.translate(centre_xy)
-    cube_frame[:, 3] += centre_xy
+    puzzle_frame = np.column_stack(axes + [centre + centre_xy])
 
     solid, parts, used = body, [], CrossSection()
     for color, outline in logo.items():
@@ -149,7 +176,7 @@ def build(p: Params, svg_path: Path) -> Stand:
         parts.append((f"logo_{color.lstrip('#')}", color, raised))
     parts.insert(0, ("body", p.body_color, body))
 
-    return Stand(solid, parts, cube_frame, (2 * bottom_half, depth, height))
+    return Stand(solid, parts, puzzle.transform(puzzle_frame), puzzle_frame, (2 * bottom_half, depth, height))
 
 
 def to_trimesh(solid: Manifold) -> trimesh.Trimesh:
@@ -157,16 +184,16 @@ def to_trimesh(solid: Manifold) -> trimesh.Trimesh:
     return trimesh.Trimesh(np.asarray(mesh.vert_properties)[:, :3], np.asarray(mesh.tri_verts), process=False)
 
 
-def write_3mf(path: Path, parts: list[tuple[str, str, Manifold]]) -> None:
-    """Write the parts as one object with a named, coloured component per part."""
+def write_3mf(path: Path, name: str, parts: list[tuple[str, str, Manifold]]) -> None:
+    """Write the parts as one object called `name` with a named, coloured component per part."""
     materials, objects, components = [], [], []
-    for index, (name, color, solid) in enumerate(parts):
+    for index, (part, color, solid) in enumerate(parts):
         mesh = to_trimesh(solid)
         vertices = "".join(f'<vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in mesh.vertices)
         triangles = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in mesh.faces)
-        materials.append(f'<base name="{name}" displaycolor="{color.upper()}"/>')
+        materials.append(f'<base name="{part}" displaycolor="{color.upper()}"/>')
         objects.append(
-            f'<object id="{index + 2}" type="model" name="{name}" pid="1" pindex="{index}">'
+            f'<object id="{index + 2}" type="model" name="{part}" pid="1" pindex="{index}">'
             f"<mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object>"
         )
         components.append(f'<component objectid="{index + 2}"/>')
@@ -175,7 +202,7 @@ def write_3mf(path: Path, parts: list[tuple[str, str, Manifold]]) -> None:
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
         f'<resources><basematerials id="1">{"".join(materials)}</basematerials>{"".join(objects)}'
-        f'<object id="{assembly}" type="model" name="cube_stand"><components>{"".join(components)}</components></object>'
+        f'<object id="{assembly}" type="model" name="{name}"><components>{"".join(components)}</components></object>'
         f'</resources><build><item objectid="{assembly}"/></build></model>'
     )
     content_types = (
@@ -190,19 +217,31 @@ def write_3mf(path: Path, parts: list[tuple[str, str, Manifold]]) -> None:
         '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
         'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'
     )
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types)
-        archive.writestr("_rels/.rels", rels)
-        archive.writestr("3D/3dmodel.model", model)
+    with zipfile.ZipFile(path, "w") as archive:
+        for entry, text in (("[Content_Types].xml", content_types), ("_rels/.rels", rels), ("3D/3dmodel.model", model)):
+            # A fixed timestamp keeps regenerated files byte-identical.
+            info = zipfile.ZipInfo(entry, date_time=(1980, 1, 1, 0, 0, 0))
+            info.external_attr = 0o644 << 16
+            archive.writestr(info, text, zipfile.ZIP_DEFLATED)
 
 
 def parse_args() -> tuple[Params, Path, Path]:
+    # The shape is read first because it decides the defaults of the other options.
+    shape_option = dict(choices=sorted(PRESETS), default="cube", help="puzzle to hold; sets the defaults below")
+    shape_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    shape_parser.add_argument("--shape", **shape_option)
+    preset = PRESETS[shape_parser.parse_known_args()[0].shape]
+
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--logo", type=Path, default=ROOT / "logo" / "SYBIKO.svg", help="SVG logo")
     parser.add_argument("--out", type=Path, default=ROOT / "output", help="output directory")
+    parser.add_argument("--shape", **shape_option)
     for field in fields(Params):
-        kind = str if field.name == "body_color" else float
-        parser.add_argument(f"--{field.name.replace('_', '-')}", type=kind, default=field.default, help="default: %(default)s")
+        if field.name == "shape":
+            continue
+        kind = str if field.type == "str" else float
+        option = f"--{field.name.replace('_', '-')}"
+        parser.add_argument(option, type=kind, default=getattr(preset, field.name), help="default: %(default)s")
     args = vars(parser.parse_args())
     logo, out = args.pop("logo"), args.pop("out")
     return Params(**args), logo, out
@@ -213,10 +252,11 @@ def main() -> None:
     stand = build(params, logo)
     out.mkdir(parents=True, exist_ok=True)
 
-    to_trimesh(stand.solid).export(out / "cube_stand.stl")
-    for name, _, solid in stand.parts:
-        to_trimesh(solid).export(out / f"cube_stand_{name}.stl")
-    write_3mf(out / "cube_stand_multicolor.3mf", stand.parts)
+    name = f"{params.shape}_stand"
+    to_trimesh(stand.solid).export(out / f"{name}.stl")
+    for part, _, solid in stand.parts:
+        to_trimesh(solid).export(out / f"{name}_{part}.stl")
+    write_3mf(out / f"{name}_multicolor.3mf", name, stand.parts)
 
     print("size (mm): %.1f x %.1f x %.1f" % stand.size)
     print("volume (cm3): %.1f" % (stand.solid.volume() / 1000))
