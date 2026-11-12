@@ -202,7 +202,7 @@ def parse_args() -> tuple[Params, Path, Path]:
     parser.add_argument("--out", type=Path, default=ROOT / "output", help="output directory")
     for field in fields(Params):
         kind = str if field.name == "body_color" else float
-        parser.add_argument(f"--{field.name.replace('_', '-')}", type=kind, default=field.default, help=" ")
+        parser.add_argument(f"--{field.name.replace('_', '-')}", type=kind, default=field.default, help="default: %(default)s")
     args = vars(parser.parse_args())
     logo, out = args.pop("logo"), args.pop("out")
     return Params(**args), logo, out
